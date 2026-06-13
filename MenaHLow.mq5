@@ -4,7 +4,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Mena H-Low EA"
 #property link      "https://github.com/mofed641-alt/mena-h-low"
-#property version   "1.01"
+#property version   "1.02"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -146,7 +146,10 @@ void CalculateHighLow()
          Print("=== معلومات السعر ===");
          Print("أعلى سعر آخر ", InpBars, " شموع: ", highPrice);
          Print("أدنى سعر آخر ", InpBars, " شموع: ", lowPrice);
-         Print("السعر الحالي (Close[0]): ", Close[0]);
+         double closePrice[];
+         ArraySetAsSeries(closePrice, true);
+         CopyClose(Symbol(), PERIOD_CURRENT, 0, 1, closePrice);
+         Print("السعر الحالي (Close): ", closePrice[0]);
          Print("======================================");
          lastPrintTime = TimeCurrent();
       }
@@ -158,22 +161,26 @@ void CalculateHighLow()
 //+------------------------------------------------------------------+
 void CheckSignals()
 {
-   double currentPrice = Close[0];
+   // الحصول على السعر الحالي
+   double currentPrice[];
+   ArraySetAsSeries(currentPrice, true);
+   if(CopyClose(Symbol(), PERIOD_CURRENT, 0, 1, currentPrice) <= 0)
+      return;
    
    // إشارة الشراء: اختراق الأعلى
-   if(currentPrice > highPrice && highPrice > 0)
+   if(currentPrice[0] > highPrice && highPrice > 0)
    {
       buySignalTriggered = true;
       if(InpPrintDebug)
-         Print("إشارة شراء: السعر ", currentPrice, " > الأعلى ", highPrice);
+         Print("إشارة شراء: السعر ", currentPrice[0], " > الأعلى ", highPrice);
    }
    
    // إشارة البيع: اختراق الأدنى
-   if(currentPrice < lowPrice && lowPrice > 0)
+   if(currentPrice[0] < lowPrice && lowPrice > 0)
    {
       sellSignalTriggered = true;
       if(InpPrintDebug)
-         Print("إشارة بيع: السعر ", currentPrice, " < الأدنى ", lowPrice);
+         Print("إشارة بيع: السعر ", currentPrice[0], " < الأدنى ", lowPrice);
    }
 }
 
@@ -354,6 +361,9 @@ void PrintDebugInfo()
 {
    totalProfit = CalculateTotalProfit();
    int positions = CountOpenPositions();
+   double closePrice[];
+   ArraySetAsSeries(closePrice, true);
+   CopyClose(Symbol(), PERIOD_CURRENT, 0, 1, closePrice);
    
    Print("======================================");
    Print("الوقت: ", TimeToString(TimeCurrent()));
@@ -362,7 +372,7 @@ void PrintDebugInfo()
    Print("الربح الإجمالي: ", totalProfit);
    Print("أعلى السعر: ", highPrice);
    Print("أدنى السعر: ", lowPrice);
-   Print("السعر الحالي: ", Close[0]);
+   Print("السعر الحالي: ", closePrice[0]);
    Print("======================================");
 }
 
