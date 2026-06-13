@@ -4,7 +4,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Mena H-Low EA"
 #property link      "https://github.com/mofed641-alt/mena-h-low"
-#property version   "1.0"
+#property version   "1.01"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -28,10 +28,11 @@ input bool   InpPrintDebug        = true;        // طباعة معلومات ا
 // ============================================================
 
 CTrade trade;
-double highPrice, lowPrice;
+double highPrice = 0, lowPrice = 0;
 int martingaleLevel = 0;
 double totalProfit = 0;
-bool buySignal = false, sellSignal = false;
+bool buySignalTriggered = false, sellSignalTriggered = false;
+bool lastSignalWasBuy = false;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -83,19 +84,29 @@ void OnTick()
    // فتح صفقات جديدة إذا لم تكن هناك صفقات مفتوحة
    if(openPositions == 0)
    {
-      if(buySignal)
+      if(buySignalTriggered && !lastSignalWasBuy)
+      {
          OpenBuyOrder();
-      else if(sellSignal)
+         lastSignalWasBuy = true;
+         buySignalTriggered = false;
+      }
+      else if(sellSignalTriggered && lastSignalWasBuy)
+      {
          OpenSellOrder();
+         lastSignalWasBuy = false;
+         sellSignalTriggered = false;
+      }
    }
-   
-   // التحقق من إغلاق السلة
-   if(InpUseBasketClose)
-      CheckBasketClose();
-   
-   // طباعة معلومات التصحيح
-   if(InpPrintDebug && openPositions > 0)
-      PrintDebugInfo();
+   else
+   {
+      // التحقق من إغلاق السلة
+      if(InpUseBasketClose)
+         CheckBasketClose();
+      
+      // طباعة معلومات التصحيح
+      if(InpPrintDebug)
+         PrintDebugInfo();
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -112,17 +123,33 @@ void CalculateHighLow()
    ArraySetAsSeries(low, true);
    
    // نسخ البيانات من الرسم البياني
-   CopyHigh(Symbol(), PERIOD_CURRENT, 1, InpBars, high);
-   CopyLow(Symbol(), PERIOD_CURRENT, 1, InpBars, low);
+   if(CopyHigh(Symbol(), PERIOD_CURRENT, 0, InpBars, high) <= 0 ||
+      CopyLow(Symbol(), PERIOD_CURRENT, 0, InpBars, low) <= 0)
+   {
+      if(InpPrintDebug)
+         Print("خطأ في نسخ بيانات الأسعار");
+      return;
+   }
    
    // إيجاد الأعلى والأدنى
-   highPrice = high[ArrayMaximum(high)];
-   lowPrice = low[ArrayMinimum(low)];
+   int highIndex = ArrayMaximum(high);
+   int lowIndex = ArrayMinimum(low);
+   
+   highPrice = high[highIndex];
+   lowPrice = low[lowIndex];
    
    if(InpPrintDebug)
    {
-      Print("أعلى سعر آخر ", InpBars, " شموع: ", highPrice);
-      Print("أدنى سعر آخر ", InpBars, " شموع: ", lowPrice);
+      static datetime lastPrintTime = 0;
+      if(TimeCurrent() - lastPrintTime >= 60) // طباعة كل دقيقة
+      {
+         Print("=== معلومات السعر ===");
+         Print("أعلى سعر آخر ", InpBars, " شموع: ", highPrice);
+         Print("أدنى سعر آخر ", InpBars, " شموع: ", lowPrice);
+         Print("السعر الحالي (Close[0]): ", Close[0]);
+         Print("======================================");
+         lastPrintTime = TimeCurrent();
+      }
    }
 }
 
@@ -131,10 +158,23 @@ void CalculateHighLow()
 //+------------------------------------------------------------------+
 void CheckSignals()
 {
-   double currentPrice = SymbolInfoDouble(Symbol(), SYMBOL_LAST);
+   double currentPrice = Close[0];
    
-   buySignal = (currentPrice > highPrice);
-   sellSignal = (currentPrice < lowPrice);
+   // إشارة الشراء: اختراق الأعلى
+   if(currentPrice > highPrice && highPrice > 0)
+   {
+      buySignalTriggered = true;
+      if(InpPrintDebug)
+         Print("إشارة شراء: السعر ", currentPrice, " > الأعلى ", highPrice);
+   }
+   
+   // إشارة البيع: اختراق الأدنى
+   if(currentPrice < lowPrice && lowPrice > 0)
+   {
+      sellSignalTriggered = true;
+      if(InpPrintDebug)
+         Print("إشارة بيع: السعر ", currentPrice, " < الأدنى ", lowPrice);
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -144,15 +184,29 @@ void OpenBuyOrder()
 {
    double lot = CalculateLotSize();
    double ask = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
-   double tp = ask + InpTakeProfit * Point();
-   double sl = ask - InpStopLoss * Point();
+   double point = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+   double tp = ask + InpTakeProfit * point;
+   double sl = ask - InpStopLoss * point;
    
-   trade.Buy(lot, Symbol(), ask, sl, tp, "Mena H-Low Buy");
+   // التحقق من صحة البيانات
+   if(ask <= 0 || lot <= 0)
+   {
+      if(InpPrintDebug)
+         Print("خطأ: بيانات غير صحيحة - Ask: ", ask, " Lot: ", lot);
+      return;
+   }
    
-   if(InpPrintDebug)
-      Print("فتح أمر شراء - اللوت: ", lot, " - TP: ", tp, " - SL: ", sl);
-   
-   martingaleLevel++;
+   if(trade.Buy(lot, Symbol(), ask, sl, tp, "Mena H-Low Buy"))
+   {
+      if(InpPrintDebug)
+         Print("✓ تم فتح أمر شراء - اللوت: ", lot, " - السعر: ", ask, " - TP: ", tp, " - SL: ", sl);
+      martingaleLevel++;
+   }
+   else
+   {
+      if(InpPrintDebug)
+         Print("✗ فشل فتح أمر الشراء - الخطأ: ", trade.ResultRetcode());
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -162,15 +216,29 @@ void OpenSellOrder()
 {
    double lot = CalculateLotSize();
    double bid = SymbolInfoDouble(Symbol(), SYMBOL_BID);
-   double tp = bid - InpTakeProfit * Point();
-   double sl = bid + InpStopLoss * Point();
+   double point = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+   double tp = bid - InpTakeProfit * point;
+   double sl = bid + InpStopLoss * point;
    
-   trade.Sell(lot, Symbol(), bid, sl, tp, "Mena H-Low Sell");
+   // التحقق من صحة البيانات
+   if(bid <= 0 || lot <= 0)
+   {
+      if(InpPrintDebug)
+         Print("خطأ: بيانات غير صحيحة - Bid: ", bid, " Lot: ", lot);
+      return;
+   }
    
-   if(InpPrintDebug)
-      Print("فتح أمر بيع - اللوت: ", lot, " - TP: ", tp, " - SL: ", sl);
-   
-   martingaleLevel++;
+   if(trade.Sell(lot, Symbol(), bid, sl, tp, "Mena H-Low Sell"))
+   {
+      if(InpPrintDebug)
+         Print("✓ تم فتح أمر بيع - اللوت: ", lot, " - السعر: ", bid, " - TP: ", tp, " - SL: ", sl);
+      martingaleLevel++;
+   }
+   else
+   {
+      if(InpPrintDebug)
+         Print("✗ فشل فتح أمر البيع - الخطأ: ", trade.ResultRetcode());
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -184,14 +252,19 @@ double CalculateLotSize()
    for(int i = 0; i < martingaleLevel && i < InpMaxMartingale; i++)
       lot *= 2;
    
-   // التحقق من الحد الأقصى للوت
+   // التحقق من الحد الأقصى والأدنى للوت
    double maxLot = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_MAX);
    double minLot = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_MIN);
+   double step = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_STEP);
    
    if(lot > maxLot)
       lot = maxLot;
    if(lot < minLot)
       lot = minLot;
+   
+   // تقريب اللوت حسب خطوة النظام
+   if(step > 0)
+      lot = MathRound(lot / step) * step;
    
    return lot;
 }
@@ -204,7 +277,8 @@ int CountOpenPositions()
    int count = 0;
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
-      if(PositionSelectByTicket(PositionGetTicket(i)))
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
       {
          if(PositionGetString(POSITION_SYMBOL) == Symbol() &&
             PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
@@ -227,7 +301,7 @@ void CheckBasketClose()
       martingaleLevel = 0;
       
       if(InpPrintDebug)
-         Print("تم إغلاق السلة - الربح الإجمالي: ", totalProfit);
+         Print("✓ تم إغلاق السلة بنجاح - الربح الإجمالي: ", totalProfit);
    }
 }
 
@@ -240,7 +314,8 @@ double CalculateTotalProfit()
    
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
-      if(PositionSelectByTicket(PositionGetTicket(i)))
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
       {
          if(PositionGetString(POSITION_SYMBOL) == Symbol() &&
             PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
@@ -260,12 +335,13 @@ void CloseAllPositions()
 {
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
-      if(PositionSelectByTicket(PositionGetTicket(i)))
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
       {
          if(PositionGetString(POSITION_SYMBOL) == Symbol() &&
             PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
          {
-            trade.PositionClose(PositionGetTicket(i));
+            trade.PositionClose(ticket);
          }
       }
    }
@@ -278,7 +354,6 @@ void PrintDebugInfo()
 {
    totalProfit = CalculateTotalProfit();
    int positions = CountOpenPositions();
-   double currentPrice = SymbolInfoDouble(Symbol(), SYMBOL_LAST);
    
    Print("======================================");
    Print("الوقت: ", TimeToString(TimeCurrent()));
@@ -287,7 +362,7 @@ void PrintDebugInfo()
    Print("الربح الإجمالي: ", totalProfit);
    Print("أعلى السعر: ", highPrice);
    Print("أدنى السعر: ", lowPrice);
-   Print("السعر الحالي: ", currentPrice);
+   Print("السعر الحالي: ", Close[0]);
    Print("======================================");
 }
 
