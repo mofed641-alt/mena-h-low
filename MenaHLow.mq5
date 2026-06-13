@@ -4,7 +4,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Mena H-Low EA"
 #property link      "https://github.com/mofed641-alt/mena-h-low"
-#property version   "1.03"
+#property version   "1.04"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -33,7 +33,7 @@ double highPrice = 0, lowPrice = 0;
 int martingaleLevel = 0;
 double totalProfit = 0;
 bool buyOrderOpen = false, sellOrderOpen = false;
-int breakoutCandle = -1;
+datetime lastBarTime = 0;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -74,12 +74,13 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   static int lastBar = -1;
+   // الحصول على وقت الشمعة الحالية
+   datetime currentBarTime = iTime(Symbol(), PERIOD_CURRENT, 0);
    
    // التحقق من شمعة جديدة
-   if(lastBar == iBarCode())
+   if(currentBarTime == lastBarTime)
       return;
-   lastBar = iBarCode();
+   lastBarTime = currentBarTime;
    
    // التحقق من وجود صفقات مفتوحة
    int openPositions = CountOpenPositions();
@@ -107,14 +108,6 @@ void OnTick()
       if(InpPrintDebug)
          PrintDebugInfo();
    }
-}
-
-//+------------------------------------------------------------------+
-//| الحصول على رمز الشمعة الحالية
-//+------------------------------------------------------------------+
-int iBarCode()
-{
-   return (int)Time[0];
 }
 
 //+------------------------------------------------------------------+
@@ -150,7 +143,11 @@ void CalculateHighLow()
    {
       Print("أعلى سعر آخر ", InpBars, " شموع: ", highPrice);
       Print("أدنى سعر آخر ", InpBars, " شموع: ", lowPrice);
-      Print("السعر الحالي (Close): ", Close[0]);
+      
+      double closePrice[];
+      ArraySetAsSeries(closePrice, true);
+      CopyClose(Symbol(), PERIOD_CURRENT, 0, 1, closePrice);
+      Print("السعر الحالي (Close): ", closePrice[0]);
    }
 }
 
@@ -159,7 +156,12 @@ void CalculateHighLow()
 //+------------------------------------------------------------------+
 void CheckAndOpenOrder()
 {
-   double currentClose = Close[0];
+   double closePrice[];
+   ArraySetAsSeries(closePrice, true);
+   if(CopyClose(Symbol(), PERIOD_CURRENT, 0, 1, closePrice) <= 0)
+      return;
+   
+   double currentClose = closePrice[0];
    
    // إشارة الشراء: اختراق الأعلى
    if(currentClose > highPrice && highPrice > 0)
@@ -168,7 +170,6 @@ void CheckAndOpenOrder()
          Print("✓ إشارة شراء كسر الأعلى: ", currentClose, " > ", highPrice);
       OpenBuyOrder();
       buyOrderOpen = true;
-      breakoutCandle = 0;
    }
    // إشارة البيع: اختراق الأدنى
    else if(currentClose < lowPrice && lowPrice > 0)
@@ -177,7 +178,6 @@ void CheckAndOpenOrder()
          Print("✓ إشارة بيع كسر الأدنى: ", currentClose, " < ", lowPrice);
       OpenSellOrder();
       sellOrderOpen = true;
-      breakoutCandle = 0;
    }
 }
 
@@ -375,6 +375,10 @@ void PrintDebugInfo()
    totalProfit = CalculateTotalProfit();
    int positions = CountOpenPositions();
    
+   double closePrice[];
+   ArraySetAsSeries(closePrice, true);
+   CopyClose(Symbol(), PERIOD_CURRENT, 0, 1, closePrice);
+   
    Print("======================================");
    Print("الوقت: ", TimeToString(TimeCurrent()));
    Print("عدد الصفقات المفتوحة: ", positions);
@@ -382,7 +386,7 @@ void PrintDebugInfo()
    Print("الربح الإجمالي: ", totalProfit);
    Print("أعلى السعر: ", highPrice);
    Print("أدنى السعر: ", lowPrice);
-   Print("السعر الحالي: ", Close[0]);
+   Print("السعر الحالي: ", closePrice[0]);
    Print("======================================");
 }
 
